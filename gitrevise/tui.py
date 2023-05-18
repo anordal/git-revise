@@ -10,12 +10,14 @@ from .merge import MergeConflict
 from .odb import Commit, Reference, Repository
 from .todo import apply_todos, autosquash_todos, build_todos, edit_todos
 from .utils import (
+    DetourDetected,
     EditorError,
     commit_range,
     cut_commit,
     decode_lossy,
     edit_commit_message,
     local_commits,
+    rebase_via,
     update_head,
 )
 
@@ -110,6 +112,12 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="interactively cut a commit into two smaller commits",
     )
+    mode_group.add_argument(
+        "--via",
+        "-v",
+        action="store_true",
+        help="rebase via: keeps the file contents of later commits fixed",
+    )
 
     gpg_group = parser.add_mutually_exclusive_group()
     gpg_group.add_argument(
@@ -187,10 +195,16 @@ def noninteractive(
         raise ValueError("Invalid target reference")
 
     current = replaced = repo.get_commit(args.target)
+    final = head.target.tree()
+
+    if args.via:
+        current = rebase_via(repo, current, head.target)
+        update_head(head, current, final)
+        return
+
     to_rebase = commit_range(current, head.target)
 
     # Apply changes to the target commit.
-    final = head.target.tree()
     if staged:
         print(f"Applying staged changes to '{args.target}'")
         current = current.update(tree=staged.rebase(current).tree())
@@ -274,6 +288,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             inner_main(args, repo)
     except CalledProcessError as err:
         print(f"subprocess exited with non-zero status: {err.returncode}")
+        sys.exit(1)
+    except DetourDetected as err:
+        print(f"detour detected: {err}")
         sys.exit(1)
     except EditorError as err:
         print(f"editor error: {err}")
