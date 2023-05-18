@@ -18,6 +18,10 @@ class EditorError(Exception):
     pass
 
 
+class DetourDetected(Exception):
+    pass
+
+
 def commit_range(base: Optional[Commit], tip: Commit) -> List[Commit]:
     """Oldest-first iterator over the given commit range,
     not including the commit ``base``"""
@@ -302,6 +306,46 @@ def cut_commit(commit: Commit, pathspecs: Optional[List[str]] = None) -> Commit:
     part2 = edit_commit_message(part2)
 
     return part2
+
+
+def rebase_via(repo: Repository, via_commit: Commit, head: Commit) -> Commit:
+    common_ancestor = repo.git("merge-base", via_commit.oid.hex(), head.oid.hex())
+    common_ancestor = repo.get_commit(Oid.fromhex(common_ancestor.decode()))
+    replay_range = commit_range(common_ancestor, head)
+
+    if len(replay_range) == 0:
+        raise ValueError(
+            "No commits to replay on the via-commit "
+            "that aren't already ancestors of it."
+        )
+
+    forced_commit = replay_range[0]
+    new_diffsize = diff_size(repo, forced_commit, via_commit)
+    old_diffsize = diff_size(repo, forced_commit, forced_commit.parent())
+    if new_diffsize > old_diffsize:
+        summary_str = decode_lossy(forced_commit.summary())
+        raise DetourDetected(
+            "The via-commit did not help reduce the next commit's diff."
+            " This looks like a mistake."
+            " Make sure the next commit is what you expect: " + summary_str
+        )
+
+    tip = via_commit
+    for commit in replay_range:
+        tip = commit.rebase(tip, commit.tree())
+    return tip
+
+
+def diff_size(repo: Repository, tree_a: Commit|Tree, tree_b: Commit|Tree) -> int:
+    changes = 0
+    for line in repo.git("diff-tree", "--numstat", tree_a.oid.hex(), tree_b.oid.hex()).splitlines():
+        fields = line.split(b"\t")
+        if fields[0] == b"-":  # Binary.
+            changes += 1000
+            continue
+        changes += int(fields[0])
+        changes += int(fields[1])
+    return changes
 
 
 def sh_path() -> str:
