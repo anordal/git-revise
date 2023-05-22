@@ -36,6 +36,9 @@ def build_parser() -> ArgumentParser:
         nargs="?",
         help="target commit to apply fixups to",
     )
+    parser.add_argument(
+        "pathspecs", nargs="*", help="make --cut select only from matching files"
+    )
     parser.add_argument("--ref", default="HEAD", help="reference to update")
     parser.add_argument(
         "--reauthor",
@@ -201,7 +204,7 @@ def noninteractive(
 
     # If the commit should be cut, prompt the user to perform the cut.
     if args.cut:
-        current = cut_commit(current)
+        current = cut_commit(current, args.pathspecs)
 
     # Add or remove GPG signatures.
     if repo.sign_commits != bool(current.gpgsig):
