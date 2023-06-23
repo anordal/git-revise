@@ -50,14 +50,20 @@ class Step:
 
     @staticmethod
     def parse(repo: Repository, instr: str) -> Step:
-        parsed = re.match(r"(?P<command>\S+)\s+(?P<hash>\S+)", instr)
+        parsed = re.match(
+            r"(?P<command>\S+)\s+(?P<hash>\S+)(\s+(?P<summary>.*))?$", instr
+        )
         if not parsed:
             raise ValueError(
                 f"todo entry '{instr}' must follow format <keyword> <sha> <optional message>"
             )
         kind = StepKind.parse(parsed.group("command"))
         commit = repo.get_commit(parsed.group("hash"))
-        return Step(kind, commit)
+        step = Step(kind, commit)
+        summary = parsed.group("summary")
+        if summary is not None:
+            step.message = commit.message_with_edited_summary(summary)
+        return step
 
     def __str__(self) -> str:
         return f"{self.kind} {self.commit.oid.short()}"
