@@ -610,11 +610,20 @@ class Commit(GitObj):
 
     def summary(self) -> str:
         """The summary line of the commit message. Returns the summary
-        as a single line, even if it spans multiple lines."""
+        as a single line, even if it spans multiple lines.
+        This transformation matches that of `git commit --fixup`,
+        i.e. makes the matching commit match."""
         summary_paragraph = self.message.split(b"\n\n", maxsplit=1)[0].decode(
             errors="replace"
         )
         return " ".join(summary_paragraph.splitlines())
+
+    def message_with_edited_summary(self, edited_summary_line: str) -> bytes:
+        if edited_summary_line == self.summary():
+            return self.message
+        head_body = self.message.split(b"\n\n", maxsplit=1)
+        head_body[0] = edited_summary_line.encode()
+        return b"\n\n".join(head_body).rstrip() + b"\n"
 
     def rebase(
         self,
