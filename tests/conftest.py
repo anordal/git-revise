@@ -194,6 +194,9 @@ class EditorFile:
             text = textwrap.dedent(text).encode()
         self.outdata = text
 
+    def replace_lines(self, lines: Sequence[bytes]) -> None:
+        self.outdata = b"".join(map(lambda x: x + b"\n", lines))
+
     def __repr__(self) -> str:
         return f"<EditorFile {self.indata!r}>"
 

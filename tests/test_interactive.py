@@ -362,3 +362,19 @@ def test_no_changes(repo: Repository, interactive_mode: str) -> None:
     assert normalized_outputs == ["", "(warning) no changes performed\n"]
     new = repo.get_commit("HEAD")
     assert new.oid == old.oid
+
+
+def test_editable_summary(repo: Repository) -> None:
+    bash("git commit --allow-empty -m summary -m body")
+    old = repo.get_commit("HEAD")
+    assert old.message == b"summary\n\nbody\n"
+
+    with editor_main(["-i", "--root"]) as ed:
+        with ed.next_file() as f:
+            lines = f.indata.splitlines()
+            assert lines[0] == f"pick {old.oid.short()} summary".encode()
+            lines[0] = f"pick {old.oid.short()} new summary".encode()
+            f.replace_lines(lines)
+
+    new = repo.get_commit("HEAD")
+    assert new.message == b"new summary\n\nbody\n"
