@@ -100,9 +100,19 @@ def validate_todos(old: List[Step], new: List[Step]) -> None:
         # XXX(nika): Perhaps print which commits were found?
         raise ValueError("Unexpected commits not referenced in original TODO list")
 
-    if old_set - new_set:
-        # XXX(nika): Perhaps print which commits were omitted?
-        raise ValueError("Unexpected commits missing from TODO list")
+    # Allow dropping empty commits and bubbles
+    # (sequences that would be empty if squashed).
+    dropped_list = [o.commit for o in old if o.commit.oid not in new_set]
+    while dropped_list and len(dropped_list[0].parent_oids) == 1:
+        parent_tree = dropped_list[0].parents()[0].tree_oid
+        for index, commit in enumerate(dropped_list):
+            if commit.tree_oid == parent_tree:
+                dropped_list = dropped_list[index + 1 :]
+                break
+        else:
+            break
+    if dropped_list:
+        raise ValueError(f"Can't drop nonempty commit {dropped_list[0].oid}")
 
     saw_index = False
     for step in new:
