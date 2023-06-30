@@ -1,8 +1,9 @@
+from subprocess import CalledProcessError
 from typing import TYPE_CHECKING, List, Optional, Sequence
 
 import pytest
 
-from gitrevise.odb import Repository
+from gitrevise.odb import Commit, Repository
 
 from .conftest import bash, editor_main
 
@@ -378,3 +379,70 @@ def test_editable_summary(repo: Repository) -> None:
 
     new = repo.get_commit("HEAD")
     assert new.message == b"new summary\n\nbody\n"
+
+
+def test_bubbledrop(repo: Repository) -> None:
+    bash(
+        """
+        echo "hello, world" > file1
+        git add file1
+        git commit -m "commit one"
+
+        echo "second file" > file2
+        git add file2
+        git commit -m "commit two"
+
+        echo "new line!" >> file1
+        git add file1
+        git commit -m "commit three"
+
+        git commit --allow-empty -m "empty commit"
+        git revert --no-edit HEAD~2
+        git revert --no-edit HEAD~2
+
+        echo "new line!" >> file2
+        git add file2
+        git commit -m "final state"
+        """
+    )
+
+    def head(minus: int) -> Commit:
+        commit = repo.get_commit("HEAD")
+        for _ in range(minus):
+            commit = commit.parent()
+        return commit
+
+    # There is now this bubble of commits that come back to the same tree.
+    assert head(6).tree() == head(1).tree()
+
+    # The user is allowed to drop bubbles, but all trees that come after shall be the same.
+    holy_trees = [head(0).tree(), head(1).tree()]
+
+    try:
+        with editor_main(["--root", "-i"]) as ed:
+            with ed.next_file() as f:
+                lines = f.indata.splitlines()
+                # Try dropping the wrong sequence
+                lines = lines[:2] + lines[5:]
+                f.replace_lines(lines)
+        assert False, "Dropping a non-bubble shall be denied"
+    except CalledProcessError:
+        pass
+
+    with editor_main(["--root", "-i"]) as ed:
+        with ed.next_file() as f:
+            lines = f.indata.splitlines()
+            assert lines[:7] == [
+                b"pick 594c1e1eee28 commit one",
+                b"pick a6e7b8331024 commit two",
+                b"pick 0e886bfadf4e commit three",
+                b"pick f1b8a846a5fa empty commit",
+                b'pick 19fbcbdfe198 Revert "commit two"',
+                b'pick f58855baa550 Revert "commit three"',
+                b"pick 0bfbcc8b272c final state",
+            ]
+            # Drop the bubble
+            lines = lines[:1] + lines[6:]
+            f.replace_lines(lines)
+
+    assert [head(0).tree(), head(1).tree()] == holy_trees
