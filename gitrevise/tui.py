@@ -13,6 +13,7 @@ from .utils import (
     EditorError,
     commit_range,
     cut_commit,
+    decode_lossy,
     edit_commit_message,
     local_commits,
     update_head,
@@ -214,14 +215,14 @@ def noninteractive(
     )
 
     if current != replaced or change_signature:
-        print(f"{current.oid.short()} {current.summary()}")
+        print(f"{current.oid.short()} {decode_lossy(current.summary())}")
 
         # Rebase commits atop the commit range.
         for commit in to_rebase:
             if repo.sign_commits != bool(commit.gpgsig):
                 commit = commit.update(recommit=True)
             current = commit.rebase(current)
-            print(f"{current.oid.short()} {current.summary()}")
+            print(f"{current.oid.short()} {decode_lossy(current.summary())}")
 
         update_head(head, current, final)
     else:
