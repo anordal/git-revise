@@ -5,7 +5,13 @@ from enum import Enum
 from typing import List, Optional
 
 from .odb import Commit, MissingObject, Repository
-from .utils import cut_commit, edit_commit_message, run_editor, run_sequence_editor
+from .utils import (
+    cut_commit,
+    decode_lossy,
+    edit_commit_message,
+    run_editor,
+    run_sequence_editor,
+)
 
 
 class StepKind(Enum):
@@ -49,16 +55,16 @@ class Step:
         self.message = commit.message
 
     @staticmethod
-    def parse(repo: Repository, instr: str) -> Step:
+    def parse(repo: Repository, instr: bytes) -> Step:
         parsed = re.match(
-            r"(?P<command>\S+)\s+(?P<hash>\S+)(\s+(?P<summary>.*))?$", instr
+            rb"(?P<command>\S+)\s+(?P<hash>\S+)(\s+(?P<summary>.*))?$", instr
         )
         if not parsed:
             raise ValueError(
-                f"todo entry '{instr}' must follow format <keyword> <sha> <optional message>"
+                f"todo entry '{decode_lossy(instr)}' must follow format <keyword> <sha> <optional message>"
             )
-        kind = StepKind.parse(parsed.group("command"))
-        commit = repo.get_commit(parsed.group("hash"))
+        kind = StepKind.parse(decode_lossy(parsed.group("command")))
+        commit = repo.get_commit(decode_lossy(parsed.group("hash")))
         step = Step(kind, commit)
         summary = parsed.group("summary")
         if summary is not None:
@@ -124,14 +130,14 @@ def validate_todos(old: List[Step], new: List[Step]) -> None:
 
 def add_autosquash_step(step: Step, picks: List[List[Step]]) -> None:
     needle = summary = step.commit.summary()
-    while needle.startswith("fixup! ") or needle.startswith("squash! "):
+    while needle.startswith(b"fixup! ") or needle.startswith(b"squash! "):
         needle = needle.split(maxsplit=1)[1]
 
     if needle != summary:
-        if summary.startswith("fixup!"):
+        if summary.startswith(b"fixup!"):
             new_step = Step(StepKind.FIXUP, step.commit)
         else:
-            assert summary.startswith("squash!")
+            assert summary.startswith(b"squash!")
             new_step = Step(StepKind.SQUASH, step.commit)
 
         for seq in picks:
@@ -140,7 +146,7 @@ def add_autosquash_step(step: Step, picks: List[List[Step]]) -> None:
                 return
 
         try:
-            target = step.commit.repo.get_commit(needle)
+            target = step.commit.repo.get_commit(needle.decode())
             for seq in picks:
                 if any(s.commit == target for s in seq):
                     seq.append(new_step)
@@ -202,7 +208,7 @@ def edit_todos_msgedit(repo: Repository, todos: List[Step]) -> List[Step]:
     for full in re.split(rb"^\+\+ ", response, flags=re.M)[1:]:
         cmd, message = full.split(b"\n", maxsplit=1)
 
-        step = Step.parse(repo, cmd.decode(errors="replace").strip())
+        step = Step.parse(repo, cmd.strip())
         step.message = message.strip() + b"\n"
         result.append(step)
 
@@ -219,7 +225,7 @@ def edit_todos(
 
     todos_text = b""
     for step in todos:
-        todos_text += f"{step} {step.commit.summary()}\n".encode()
+        todos_text += f"{step} ".encode() + step.commit.summary() + b"\n"
 
     response = run_sequence_editor(
         repo,
@@ -250,7 +256,7 @@ def edit_todos(
     for line in response.splitlines():
         if line.isspace():
             continue
-        step = Step.parse(repo, line.decode(errors="replace").strip())
+        step = Step.parse(repo, line.strip())
         result.append(step)
 
     validate_todos(todos, result)
@@ -301,7 +307,9 @@ def apply_todos(
         if reauthor:
             current = current.update(author=current.repo.default_author)
 
-        print(f"{step.kind.value:6} {current.oid.short()}  {current.summary()}")
+        print(
+            f"{step.kind.value:6} {current.oid.short()}  {decode_lossy(current.summary())}"
+        )
 
     if current is None:
         raise ValueError("No commits introduced on top of root commit")

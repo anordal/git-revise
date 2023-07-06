@@ -20,7 +20,7 @@ from subprocess import CalledProcessError
 from typing import Iterator, Optional, Tuple, TypeVar
 
 from .odb import Blob, Commit, Entry, Mode, Repository, Tree
-from .utils import edit_file
+from .utils import decode_lossy, edit_file
 
 T = TypeVar("T")  # pylint: disable=invalid-name
 
@@ -42,7 +42,7 @@ def rebase(
         return commit  # No need to do anything
 
     def get_summary(cmt: Optional[Commit]) -> str:
-        return cmt.summary() if cmt is not None else "<root>"
+        return decode_lossy(cmt.summary()) if cmt is not None else "<root>"
 
     def get_tree(cmt: Optional[Commit]) -> Tree:
         return cmt.tree() if cmt is not None else Tree(repo, b"")

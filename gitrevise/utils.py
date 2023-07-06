@@ -325,3 +325,7 @@ def sh_run(
     if os.name == "nt":
         cmd = (sh_path(), "-ec", 'exec "$0" "$@"', *cmd)
     return run(cmd, *args, **kwargs)  # pylint: disable=subprocess-run-check
+
+
+def decode_lossy(sss: bytes) -> str:
+    return sss.decode(errors="replace")
