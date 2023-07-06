@@ -324,14 +324,11 @@ def flip_last_two_commits(repo: Repository, ed: Editor) -> None:
         lines = f.indata.splitlines()
         assert lines[0].startswith(b"pick " + head.parent().oid.short().encode())
         assert lines[1].startswith(b"pick " + head.oid.short().encode())
-        assert not lines[2], "expect todo list with exactly two items"
+        assert lines[2] == b"# refs/heads/master"
+        assert not lines[3], "Expecting todo list with exactly two commit actions"
 
-        f.replace_dedent(
-            f"""\
-            pick {head.oid.short()}
-            pick {head.parent().oid.short()}
-            """
-        )
+        lines[0], lines[1] = lines[1], lines[0]
+        f.replace_lines(lines)
 
 
 def normalize_conflict_dedent(indented_conflict: str) -> Tuple[str, str]:
