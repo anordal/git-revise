@@ -608,21 +608,19 @@ class Commit(GitObj):
             raise ValueError(f"Commit {self.oid} has {len(self.parents())} parents")
         return self.parents()[0]
 
-    def summary(self) -> str:
+    def summary(self) -> bytes:
         """The summary line of the commit message. Returns the summary
         as a single line, even if it spans multiple lines.
         This transformation matches that of `git commit --fixup`,
         i.e. makes the matching commit match."""
-        summary_paragraph = self.message.split(b"\n\n", maxsplit=1)[0].decode(
-            errors="replace"
-        )
-        return " ".join(summary_paragraph.splitlines())
+        summary_paragraph = self.message.split(b"\n\n", maxsplit=1)[0]
+        return b" ".join(summary_paragraph.splitlines())
 
-    def message_with_edited_summary(self, edited_summary_line: str) -> bytes:
+    def message_with_edited_summary(self, edited_summary_line: bytes) -> bytes:
         if edited_summary_line == self.summary():
             return self.message
         head_body = self.message.split(b"\n\n", maxsplit=1)
-        head_body[0] = edited_summary_line.encode()
+        head_body[0] = edited_summary_line
         return b"\n\n".join(head_body).rstrip() + b"\n"
 
     def rebase(
