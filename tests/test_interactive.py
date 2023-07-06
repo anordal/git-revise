@@ -167,6 +167,7 @@ def test_interactive_fixup(repo: Repository) -> None:
                 f"""\
                 pick {prev.parent().oid.short()} commit two
                 pick {prev.oid.short()} commit three
+                # refs/heads/master
                 index {index.oid.short()} <git index>
                 """
             )
@@ -175,6 +176,7 @@ def test_interactive_fixup(repo: Repository) -> None:
                 pick {prev.oid.short()} commit three
                 fixup {index.oid.short()} <git index>
                 pick {prev.parent().oid.short()} commit two
+                # refs/heads/master
                 """
             )
 
@@ -256,6 +258,7 @@ def test_autosquash_config(
         pick {headuu.oid.short()} commit two
         pick {headu.oid.short()} commit three
         pick {head.oid.short()} fixup! commit two
+        # refs/heads/master
 
         """
     enabled = f"""\

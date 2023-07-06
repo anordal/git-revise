@@ -4,7 +4,7 @@ from typing import Generator, Optional, Sequence
 import pytest
 
 from gitrevise.odb import Repository
-from gitrevise.todo import StepKind, autosquash_todos, build_todos
+from gitrevise.todo import CommitAction, autosquash_todos, build_todos
 from gitrevise.utils import commit_range
 
 from .conftest import Editor, bash, editor_main, main
@@ -316,7 +316,7 @@ def test_fixup_order(repo: Repository) -> None:
     tip = repo.get_commit("HEAD")
     assert tip.persisted
 
-    todos = build_todos(commit_range(old, tip), index=None)
+    todos = build_todos(repo, commit_range(old, tip), index=None)
     [target, first, second] = autosquash_todos(todos)
 
     assert b"target commit" in target.commit.message
@@ -340,7 +340,7 @@ def test_fixup_order_transitive(repo: Repository) -> None:
     tip = repo.get_commit("HEAD")
     assert tip.persisted
 
-    todos = build_todos(commit_range(old, tip), index=None)
+    todos = build_todos(repo, commit_range(old, tip), index=None)
     [target, a, b, c] = autosquash_todos(todos)  # pylint: disable=invalid-name
 
     assert b"target commit" in target.commit.message
@@ -364,11 +364,11 @@ def test_fixup_order_cycle(repo: Repository) -> None:
     tip = repo.get_commit("HEAD")
     assert tip.persisted
 
-    todos = build_todos(commit_range(old, tip), index=None)
+    todos = build_todos(repo, commit_range(old, tip), index=None)
 
     new_todos = autosquash_todos(todos)
     assert len(new_todos) == 3
-    assert all(step.kind == StepKind.PICK for step in new_todos)
+    assert all(step.action == CommitAction.PICK for step in new_todos)
 
 
 def test_autosquash_multiline_summary(repo: Repository) -> None:

@@ -84,6 +84,12 @@ def build_parser() -> ArgumentParser:
         action="store_true",
         help="interactively stage hunks before running",
     )
+    index_group.add_argument(
+        "--update-refs",
+        "-u",
+        action="store_true",
+        help="update local branches that point to affected commits",
+    )
 
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
@@ -132,7 +138,7 @@ def interactive(
         base, to_rebase = local_commits(repo, head.target)
 
     # Build up an initial todos list, edit that todos list.
-    todos = original = build_todos(to_rebase, staged)
+    todos = original = build_todos(repo, to_rebase, staged)
 
     if enable_autosquash(args, repo):
         todos = autosquash_todos(todos)
@@ -142,7 +148,7 @@ def interactive(
 
     if todos != original:
         # Perform the todo list actions.
-        new_head = apply_todos(base, original, todos, reauthor=args.reauthor)
+        new_head = apply_todos(repo, base, original, todos, reauthor=args.reauthor)
 
         # Update the value of HEAD to the new state.
         update_head(head, new_head, None)

@@ -219,7 +219,7 @@ class Repository:
 
     def git(
         self,
-        *cmd: str,
+        *cmd: Union[str, bytes],
         cwd: Optional[Path] = None,
         env: Optional[Dict[str, str]] = None,
         stdin: Optional[bytes] = None,
@@ -446,7 +446,7 @@ class Repository:
         """Get a :class:`Reference` to a :class:`GitObj`"""
         return Reference(GitObj, self, ref)
 
-    def get_commit_ref(self, ref: str) -> Reference[Commit]:
+    def get_commit_ref(self, ref: Union[str, bytes]) -> Reference[Commit]:
         """Get a :class:`Reference` to a :class:`Commit`"""
         return Reference(Commit, self, ref)
 
@@ -893,7 +893,9 @@ class Reference(Generic[GitObjT]):  # pylint: disable=unsubscriptable-object
     # FIXME: On python 3.6, pylint doesn't know what to do with __slots__ here.
     # __slots__ = ("name", "target", "repo", "_type")
 
-    def __init__(self, obj_type: Type[GitObjT], repo: Repository, name: str) -> None:
+    def __init__(
+        self, obj_type: Type[GitObjT], repo: Repository, name: Union[str, bytes]
+    ) -> None:
         self._type = obj_type
 
         self.name = name
