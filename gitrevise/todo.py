@@ -1,20 +1,22 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from enum import Enum
-from typing import List, Optional
+from typing import Iterable, List, Optional, Union
 
-from .odb import Commit, MissingObject, Repository
+from .odb import Commit, MissingObject, Oid, Repository
 from .utils import (
     cut_commit,
     decode_lossy,
     edit_commit_message,
     run_editor,
     run_sequence_editor,
+    update_head,
 )
 
 
-class StepKind(Enum):
+class CommitAction(Enum):
     PICK = "pick"
     FIXUP = "fixup"
     SQUASH = "squash"
@@ -25,73 +27,129 @@ class StepKind(Enum):
     def __str__(self) -> str:
         return str(self.value)
 
-    @staticmethod
-    def parse(instr: str) -> StepKind:
-        if "pick".startswith(instr):
-            return StepKind.PICK
-        if "fixup".startswith(instr):
-            return StepKind.FIXUP
-        if "squash".startswith(instr):
-            return StepKind.SQUASH
-        if "reword".startswith(instr):
-            return StepKind.REWORD
-        if "cut".startswith(instr):
-            return StepKind.CUT
-        if "index".startswith(instr):
-            return StepKind.INDEX
-        raise ValueError(
-            f"step kind '{instr}' must be one of: pick, fixup, squash, reword, cut, or index"
-        )
 
-
-class Step:
-    kind: StepKind
-    commit: Commit
-    message: bytes
-
-    def __init__(self, kind: StepKind, commit: Commit) -> None:
-        self.kind = kind
-        self.commit = commit
-        self.message = commit.message
-
-    @staticmethod
-    def parse(repo: Repository, instr: bytes) -> Step:
-        parsed = re.match(
-            rb"(?P<command>\S+)\s+(?P<hash>\S+)(\s+(?P<summary>.*))?$", instr
-        )
-        if not parsed:
-            raise ValueError(
-                f"todo entry '{decode_lossy(instr)}' must follow format <keyword> <sha> <optional message>"
-            )
-        kind = StepKind.parse(decode_lossy(parsed.group("command")))
-        commit = repo.get_commit(decode_lossy(parsed.group("hash")))
-        step = Step(kind, commit)
-        summary = parsed.group("summary")
-        if summary is not None:
-            step.message = commit.message_with_edited_summary(summary)
-        return step
+class CommitlessAction(Enum):
+    COMMENT = "#"
+    UPDATE_REF = "update-ref"
 
     def __str__(self) -> str:
-        return f"{self.kind} {self.commit.oid.short()}"
+        return str(self.value)
+
+
+def parse_action(instr: str) -> Union[CommitAction, CommitlessAction]:
+    for enumeration in (CommitAction, CommitlessAction):
+        for enumvalue in enumeration:
+            if enumvalue.value.startswith(instr):
+                # Mypy deduces too generally, to Enum instead of Union.
+                return enumvalue  # type: ignore
+    raise ValueError(
+        f"Unrecognized action '{instr}'. Expected one of"
+        " pick, fixup, squash, reword, cut, index, update-ref or #"
+    )
+
+
+class CommitStep:
+    action: CommitAction
+    commit: Commit
+    message: bytes
+    extrasteps: List[CommitlessStep]
+
+    def __init__(self, action: CommitAction, commit: Commit) -> None:
+        self.action = action
+        self.commit = commit
+        self.message = commit.message
+        self.extrasteps = []
+
+    def __str__(self) -> str:
+        return f"{self.action} {self.commit.oid.short()}"
+
+    def significant_extrasteps(self) -> Iterable[CommitlessStep]:
+        return filter(lambda x: x.action != CommitlessAction.COMMENT, self.extrasteps)
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Step):
+        if not isinstance(other, CommitStep):
             return False
         return (
-            self.kind == other.kind
+            self.action == other.action
             and self.commit == other.commit
             and self.message == other.message
+            # Must collect into lists because comparing two filter objects is always false.
+            and list(self.significant_extrasteps())
+            == list(other.significant_extrasteps())
         )
 
 
-def build_todos(commits: List[Commit], index: Optional[Commit]) -> List[Step]:
-    steps = [Step(StepKind.PICK, commit) for commit in commits]
+class CommitlessStep:
+    action: CommitlessAction
+    operand: bytes
+
+    def __init__(self, action: CommitlessAction, operand: bytes) -> None:
+        self.action = action
+        self.operand = operand
+
+    def to_bytes(self) -> bytes:
+        return f"{self.action} ".encode() + self.operand
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, CommitlessStep):
+            return False
+        return self.action == other.action and self.operand == other.operand
+
+
+def parse_step(repo: Repository, instr: bytes) -> Union[CommitStep, CommitlessStep]:
+    parsed = re.match(
+        rb"(?P<action>\S+)\s+(?P<operand>\S+)(\s+(?P<summary>.*))?$", instr
+    )
+    if not parsed:
+        raise ValueError(
+            f"todo entry '{decode_lossy(instr)}' must follow format"
+            " <action> <operand> <optional summary>"
+        )
+    action = parse_action(decode_lossy(parsed.group("action")))
+    operand = parsed.group("operand")
+
+    if isinstance(action, CommitlessAction):
+        return CommitlessStep(action, operand)
+
+    step = CommitStep(action, repo.get_commit(decode_lossy(operand)))
+    summary = parsed.group("summary")
+    if summary is not None:
+        step.message = step.commit.message_with_edited_summary(summary)
+    return step
+
+
+def build_todos(
+    repo: Repository, commits: List[Commit], index: Optional[Commit]
+) -> List[CommitStep]:
+    steps = [CommitStep(CommitAction.PICK, commit) for commit in commits]
     if index:
-        steps.append(Step(StepKind.INDEX, index))
+        steps.append(CommitStep(CommitAction.INDEX, index))
+
+    # Find refs for --update-refs
+    commit_refs = defaultdict(list)
+    for line in repo.git("show-ref", "--heads", "--tags").splitlines():
+        (sha, refname) = line.split(b" ", maxsplit=1)
+        commit_refs[Oid.fromhex(sha.decode())].append(refname)
+
+    # Except those already checked out: They would require detaching.
+    outchecked = set()
+    for record in repo.git("worktree", "list", "--porcelain").split(b"\n\n"):
+        for line in record.split(b"\n"):
+            keyval = line.split(b" ", maxsplit=1)
+            if keyval[0] == b"branch":
+                outchecked.add(keyval[1])
+
+    for step in steps:
+        for ref in commit_refs.get(step.commit.oid, []):
+            if ref.startswith(b"refs/heads/") and ref not in outchecked:
+                action = CommitlessAction.UPDATE_REF
+            else:
+                action = CommitlessAction.COMMENT
+            step.extrasteps.append(CommitlessStep(action, ref))
     return steps
 
 
-def validate_todos(old: List[Step], new: List[Step]) -> None:
+def validate_todos(old: List[CommitStep], new: List[CommitStep]) -> None:
     """Raise an exception if the new todo list is malformed compared to the
     original todo list"""
     old_set = set(o.commit.oid for o in old)
@@ -122,23 +180,23 @@ def validate_todos(old: List[Step], new: List[Step]) -> None:
 
     saw_index = False
     for step in new:
-        if step.kind == StepKind.INDEX:
+        if step.action == CommitAction.INDEX:
             saw_index = True
         elif saw_index:
             raise ValueError("'index' actions follow all non-index todo items")
 
 
-def add_autosquash_step(step: Step, picks: List[List[Step]]) -> None:
+def add_autosquash_step(step: CommitStep, picks: List[List[CommitStep]]) -> None:
     needle = summary = step.commit.summary()
     while needle.startswith(b"fixup! ") or needle.startswith(b"squash! "):
         needle = needle.split(maxsplit=1)[1]
 
     if needle != summary:
         if summary.startswith(b"fixup!"):
-            new_step = Step(StepKind.FIXUP, step.commit)
+            new_step = CommitStep(CommitAction.FIXUP, step.commit)
         else:
             assert summary.startswith(b"squash!")
-            new_step = Step(StepKind.SQUASH, step.commit)
+            new_step = CommitStep(CommitAction.SQUASH, step.commit)
 
         for seq in picks:
             if seq[0].commit.summary().startswith(needle):
@@ -157,18 +215,26 @@ def add_autosquash_step(step: Step, picks: List[List[Step]]) -> None:
     picks.append([step])
 
 
-def autosquash_todos(todos: List[Step]) -> List[Step]:
-    picks: List[List[Step]] = []
+def autosquash_todos(todos: List[CommitStep]) -> List[CommitStep]:
+    picks: List[List[CommitStep]] = []
     for step in todos:
         add_autosquash_step(step, picks)
     return [s for p in picks for s in p]
 
 
-def edit_todos_msgedit(repo: Repository, todos: List[Step]) -> List[Step]:
-    todos_text = b""
+def edit_todos_msgedit(
+    repo: Repository,
+    todos: List[CommitStep],
+    presentation_order_head_on_top: bool,
+) -> List[Union[CommitStep, CommitlessStep]]:
+    serialized_todos = []
     for step in todos:
-        todos_text += f"++ {step}\n".encode()
-        todos_text += step.commit.message + b"\n"
+        serialized_todos.append(f"{step}\n".encode() + step.commit.message)
+        for extrastep in step.extrasteps:
+            serialized_todos.append(extrastep.to_bytes())
+    if presentation_order_head_on_top:
+        serialized_todos.reverse()
+    todos_text = b"".join(map(lambda x: b"++ " + x + b"\n", serialized_todos))
 
     # Invoke the editors to parse commit messages.
     response = run_editor(
@@ -203,29 +269,33 @@ def edit_todos_msgedit(repo: Repository, todos: List[Step]) -> List[Step]:
         """,
     )
 
-    # Parse the response back into a list of steps
-    result = []
+    # Minimal parsing into a common format
+    polymorphic_steps = []
     for full in re.split(rb"^\+\+ ", response, flags=re.M)[1:]:
         cmd, message = full.split(b"\n", maxsplit=1)
 
-        step = Step.parse(repo, cmd.strip())
-        step.message = message.strip() + b"\n"
-        result.append(step)
+        polystep = parse_step(repo, cmd.strip())
+        if isinstance(polystep, CommitStep):
+            # https://github.com/pylint-dev/pylint/issues/8900
+            # pylint: disable=attribute-defined-outside-init
+            polystep.message = message.strip() + b"\n"
+        polymorphic_steps.append(polystep)
+    return polymorphic_steps
 
-    validate_todos(todos, result)
 
-    return result
-
-
-def edit_todos(
-    repo: Repository, todos: List[Step], msgedit: bool = False
-) -> List[Step]:
-    if msgedit:
-        return edit_todos_msgedit(repo, todos)
-
-    todos_text = b""
+def edit_todos_linewise(
+    repo: Repository,
+    todos: List[CommitStep],
+    presentation_order_head_on_top: bool,
+) -> List[Union[CommitStep, CommitlessStep]]:
+    serialized_todos = []
     for step in todos:
-        todos_text += f"{step} ".encode() + step.commit.summary() + b"\n"
+        serialized_todos.append(f"{step} ".encode() + step.commit.summary())
+        for extrastep in step.extrasteps:
+            serialized_todos.append(extrastep.to_bytes())
+    if presentation_order_head_on_top:
+        serialized_todos.reverse()
+    todos_text = b"".join(map(lambda x: x + b"\n", serialized_todos))
 
     response = run_sequence_editor(
         repo,
@@ -251,13 +321,46 @@ def edit_todos(
         """,
     )
 
-    # Parse the response back into a list of steps
-    result = []
+    # Minimal parsing into a common format
+    polymorphic_steps = []
     for line in response.splitlines():
         if line.isspace():
             continue
-        step = Step.parse(repo, line.strip())
-        result.append(step)
+        polymorphic_steps.append(parse_step(repo, line.strip()))
+    return polymorphic_steps
+
+
+def edit_todos(
+    repo: Repository,
+    todos: List[CommitStep],
+    msgedit: bool,
+) -> List[CommitStep]:
+    presentation_order_head_on_top = repo.bool_config(
+        "sequence.presentation-order-head-on-top", default=False
+    )
+
+    if msgedit:
+        polymorphic_steps = edit_todos_msgedit(
+            repo, todos, presentation_order_head_on_top
+        )
+    else:
+        polymorphic_steps = edit_todos_linewise(
+            repo, todos, presentation_order_head_on_top
+        )
+
+    if presentation_order_head_on_top:
+        polymorphic_steps.reverse()
+
+    result = []
+    for polystep in polymorphic_steps:
+        if isinstance(polystep, CommitStep):
+            result.append(polystep)
+        elif isinstance(polystep, CommitlessStep):
+            if len(result) == 0:
+                raise ValueError("Actions can not be applied to the base commit")
+            result[-1].extrasteps.append(polystep)
+        else:
+            raise ValueError("Unhandled Step type")
 
     validate_todos(todos, result)
 
@@ -265,9 +368,10 @@ def edit_todos(
 
 
 def apply_todos(
+    repo: Repository,
     current: Optional[Commit],
-    todos_original: List[Step],
-    todos_edited: List[Step],
+    todos_original: List[CommitStep],
+    todos_edited: List[CommitStep],
     reauthor: bool = False,
 ) -> Commit:
     applied_old_commits = set()
@@ -283,32 +387,38 @@ def apply_todos(
 
         rebased = step.commit.rebase(current, tree_to_keep).update(message=step.message)
 
-        if step.kind == StepKind.PICK:
+        if step.action == CommitAction.PICK:
             current = rebased
-        elif step.kind == StepKind.FIXUP:
+        elif step.action == CommitAction.FIXUP:
             if current is None:
                 raise ValueError("Cannot apply fixup as first commit")
             current = current.update(tree=rebased.tree())
-        elif step.kind == StepKind.REWORD:
+        elif step.action == CommitAction.REWORD:
             current = edit_commit_message(rebased)
-        elif step.kind == StepKind.SQUASH:
+        elif step.action == CommitAction.SQUASH:
             if current is None:
                 raise ValueError("Cannot apply squash as first commit")
             fused = current.message + b"\n\n" + rebased.message
             current = current.update(tree=rebased.tree(), message=fused)
             current = edit_commit_message(current)
-        elif step.kind == StepKind.CUT:
+        elif step.action == CommitAction.CUT:
             current = cut_commit(rebased)
-        elif step.kind == StepKind.INDEX:
+        elif step.action == CommitAction.INDEX:
             break
         else:
-            raise ValueError(f"Unknown StepKind value: {step.kind}")
+            raise ValueError(f"Unhandled action: {step.action}")
 
         if reauthor:
             current = current.update(author=current.repo.default_author)
 
+        for extrastep in step.significant_extrasteps():
+            if extrastep.action == CommitlessAction.UPDATE_REF:
+                update_head(repo.get_commit_ref(extrastep.operand), current, None)
+            else:
+                raise ValueError(f"Unhandled action: {extrastep.action}")
+
         print(
-            f"{step.kind.value:6} {current.oid.short()}  {decode_lossy(current.summary())}"
+            f"{step.action.value:6} {current.oid.short()}  {decode_lossy(current.summary())}"
         )
 
     if current is None:

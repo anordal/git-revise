@@ -219,7 +219,7 @@ class Repository:
 
     def git(
         self,
-        *cmd: str,
+        *cmd: Union[str, bytes],
         cwd: Optional[Path] = None,
         env: Optional[Dict[str, str]] = None,
         stdin: Optional[bytes] = None,
@@ -368,7 +368,7 @@ class Repository:
             body += cast(bytes, entry.mode.value) + b" " + name + b"\0" + entry.oid
         return Tree(self, body)
 
-    def get_obj(self, ref: Union[Oid, str]) -> GitObj:
+    def get_obj(self, ref: Union[Oid, str, bytes]) -> GitObj:
         """Get the identified git object from this repository. If given an
         :class:`Oid`, the cache will be checked before asking git."""
         if isinstance(ref, Oid):
@@ -377,13 +377,16 @@ class Repository:
                 return cache[ref]
             ref = ref.hex()
 
+        if isinstance(ref, str):
+            ref = ref.encode()
+
         # Satisfy mypy: otherwise these are Optional[IO[Any]].
         (stdin, stdout) = (self._catfile.stdin, self._catfile.stdout)
         assert stdin is not None
         assert stdout is not None
 
         # Write out an object descriptor.
-        stdin.write(ref.encode() + b"\n")
+        stdin.write(ref + b"\n")
         stdin.flush()
 
         # Read in the response.
@@ -391,7 +394,7 @@ class Repository:
         if resp.endswith("missing\n"):
             # If we have an abbreviated hash, check for in-memory commits.
             try:
-                abbrev = bytes.fromhex(ref)
+                abbrev = bytes.fromhex(ref.decode())
                 for oid, obj in self._objects[abbrev[0]].items():
                     if oid.startswith(abbrev):
                         return obj
@@ -399,7 +402,7 @@ class Repository:
                 pass
 
             # Not an abbreviated hash, the entry is missing.
-            raise MissingObject(ref)
+            raise MissingObject(ref.decode())
 
         parts = resp.rsplit(maxsplit=2)
         oid, kind, size = Oid.fromhex(parts[0]), parts[1], int(parts[2])
@@ -446,7 +449,7 @@ class Repository:
         """Get a :class:`Reference` to a :class:`GitObj`"""
         return Reference(GitObj, self, ref)
 
-    def get_commit_ref(self, ref: str) -> Reference[Commit]:
+    def get_commit_ref(self, ref: Union[str, bytes]) -> Reference[Commit]:
         """Get a :class:`Reference` to a :class:`Commit`"""
         return Reference(Commit, self, ref)
 
@@ -893,7 +896,9 @@ class Reference(Generic[GitObjT]):  # pylint: disable=unsubscriptable-object
     # FIXME: On python 3.6, pylint doesn't know what to do with __slots__ here.
     # __slots__ = ("name", "target", "repo", "_type")
 
-    def __init__(self, obj_type: Type[GitObjT], repo: Repository, name: str) -> None:
+    def __init__(
+        self, obj_type: Type[GitObjT], repo: Repository, name: Union[str, bytes]
+    ) -> None:
         self._type = obj_type
 
         self.name = name
