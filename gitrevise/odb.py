@@ -845,7 +845,7 @@ class Index:
         trim_newline: bool = True,
     ) -> bytes:
         """Invoke git with the given index as active"""
-        env = dict(**env) if env is not None else dict(**os.environ)
+        env = {**env} if env is not None else {**os.environ}
         env["GIT_INDEX_FILE"] = str(self.index_file)
         return self.repo.git(
             *cmd,
