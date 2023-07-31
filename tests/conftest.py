@@ -252,7 +252,7 @@ class Editor(HTTPServer):
         try:
             in_data, result_future = self.pending_edits.get(timeout=self.timeout)
         except Empty as e:
-            raise Exception("timeout while waiting for request") from e
+            raise TimeoutError("timeout while waiting for request") from e
 
         if result_future.done() or not result_future.set_running_or_notify_cancel():
             raise result_future.exception() or CancelledError()
