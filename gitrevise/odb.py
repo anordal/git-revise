@@ -184,7 +184,8 @@ class Repository:
     def __init__(self, cwd: Optional[Path] = None) -> None:
         self._tempdir = None
 
-        self.workdir = Path(self.git("rev-parse", "--show-toplevel", cwd=cwd).decode())
+        self.workdir = cwd if cwd is not None else Path.cwd()
+        self.workdir = Path(self.git("rev-parse", "--show-toplevel").decode())
         self.gitdir = self.workdir / Path(self.git("rev-parse", "--git-dir").decode())
 
         # XXX(nika): Does it make more sense to cache these or call every time?
@@ -220,19 +221,15 @@ class Repository:
     def git(
         self,
         *cmd: Union[str, bytes],
-        cwd: Optional[Path] = None,
         env: Optional[Dict[str, str]] = None,
         stdin: Optional[bytes] = None,
         stdout: _FILE = PIPE,
         trim_newline: bool = True,
     ) -> bytes:
-        if cwd is None:
-            cwd = getattr(self, "workdir", None)
-
         cmd = ("git",) + cmd
         prog = run(
             cmd,
-            cwd=cwd,
+            cwd=self.workdir,
             env=env,
             input=stdin,
             stdout=stdout,
@@ -838,7 +835,6 @@ class Index:
     def git(
         self,
         *cmd: str,
-        cwd: Optional[Path] = None,
         env: Optional[Mapping[str, str]] = None,
         stdin: Optional[bytes] = None,
         stdout: _FILE = PIPE,
@@ -849,7 +845,6 @@ class Index:
         env["GIT_INDEX_FILE"] = str(self.index_file)
         return self.repo.git(
             *cmd,
-            cwd=cwd,
             env=env,
             stdin=stdin,
             stdout=stdout,
