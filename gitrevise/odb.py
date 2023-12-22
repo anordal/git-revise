@@ -143,6 +143,9 @@ class Signature(bytes):
 class Repository:
     """Main entry point for a git repository"""
 
+    cwd: Path
+    """current working directory"""
+
     workdir: Path
     """working directory for this repository"""
 
@@ -169,6 +172,7 @@ class Repository:
     _tempdir: Optional[TemporaryDirectory]
 
     __slots__ = [
+        "cwd",
         "workdir",
         "gitdir",
         "default_author",
@@ -184,9 +188,9 @@ class Repository:
     def __init__(self, cwd: Optional[Path] = None) -> None:
         self._tempdir = None
 
-        self.workdir = cwd if cwd is not None else Path.cwd()
+        self.cwd = cwd if cwd is not None else Path.cwd()
         self.workdir = Path(self.git("rev-parse", "--show-toplevel").decode())
-        self.gitdir = self.workdir / Path(self.git("rev-parse", "--git-dir").decode())
+        self.gitdir = (self.cwd / self.git("rev-parse", "--git-dir").decode()).resolve()
 
         # XXX(nika): Does it make more sense to cache these or call every time?
         # Cache for length of time & invalidate?
@@ -229,7 +233,7 @@ class Repository:
         cmd = ("git",) + cmd
         prog = run(
             cmd,
-            cwd=self.workdir,
+            cwd=self.cwd,
             env=env,
             input=stdin,
             stdout=stdout,
