@@ -66,12 +66,12 @@ def interactive_reorder_helper(repo: Repository, cwd: "StrPath") -> None:
 
 
 def test_interactive_reorder(repo: Repository) -> None:
-    interactive_reorder_helper(repo, cwd=repo.workdir)
+    interactive_reorder_helper(repo, cwd=repo.cwd)
 
 
 def test_interactive_reorder_subdir(repo: Repository) -> None:
     bash("mkdir subdir")
-    interactive_reorder_helper(repo, cwd=repo.workdir / "subdir")
+    interactive_reorder_helper(repo, cwd=repo.cwd / "subdir")
 
 
 def test_interactive_on_root(repo: Repository) -> None:
