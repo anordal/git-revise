@@ -284,8 +284,7 @@ class Repository:
         return Path(self._tempdir.name)
 
     def git_path(self, path: Union[str, Path]) -> Path:
-        """Get the path to a file in the .git directory, respecting the environment"""
-        return self.workdir / self.git("rev-parse", "--git-path", str(path)).decode()
+        return self.gitdir / path
 
     def new_commit(
         self,
