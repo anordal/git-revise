@@ -78,7 +78,7 @@ def test_reuse_recorded_resolution(
 
 
 def test_rerere_merge(repo: Repository) -> None:
-    (repo.workdir / "file").write_bytes(10 * b"x\n")
+    (repo.cwd / "file").write_bytes(10 * b"x\n")
     bash(
         """
         git config rerere.enabled true

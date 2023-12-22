@@ -146,9 +146,6 @@ class Repository:
     cwd: Path
     """current working directory"""
 
-    workdir: Path
-    """working directory for this repository"""
-
     gitdir: Path
     """.git directory for this repository"""
 
@@ -173,7 +170,6 @@ class Repository:
 
     __slots__ = [
         "cwd",
-        "workdir",
         "gitdir",
         "default_author",
         "default_committer",
@@ -189,7 +185,6 @@ class Repository:
         self._tempdir = None
 
         self.cwd = cwd if cwd is not None else Path.cwd()
-        self.workdir = Path(self.git("rev-parse", "--show-toplevel").decode())
         self.gitdir = (self.cwd / self.git("rev-parse", "--git-dir").decode()).resolve()
 
         # XXX(nika): Does it make more sense to cache these or call every time?
@@ -211,7 +206,7 @@ class Repository:
             bufsize=-1,
             stdin=PIPE,
             stdout=PIPE,
-            cwd=self.workdir,
+            cwd=self.cwd,
         )
         self._objects = defaultdict(dict)
 
